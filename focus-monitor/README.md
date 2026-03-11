@@ -1,6 +1,6 @@
 # FocusGuard — Focus Monitoring System
 
-A full-stack web application that monitors user focus and triggers alerts when users leave the application window.
+A full-stack web application that monitors user focus during a session. It detects when users leave the tab, tracks how long they were away, triggers alarms for prolonged inactivity, and logs all activity to MongoDB.
 
 ---
 
@@ -8,31 +8,75 @@ A full-stack web application that monitors user focus and triggers alerts when u
 
 ```
 focus-monitor/
-├── client/          # React + Vite frontend
-└── server/          # Node.js + Express backend
+├── client/                    # React + Vite frontend
+│   └── src/
+│       ├── components/        # Navbar, ViolationTable
+│       ├── pages/             # Dashboard, AdminDashboard, Login, Register
+│       └── utils/             # api.js, AuthContext, useFocusMonitor
+└── server/                    # Node.js + Express backend
+    ├── controllers/           # authController, violationController, awayTimeController
+    ├── middleware/             # auth (JWT verification)
+    ├── models/                # User, Violation, AwayLog
+    └── routes/                # authRoutes, violationRoutes, awayTimeRoutes
 ```
 
 ---
 
-## Quick Start
+## Prerequisites
 
-### 1. Setup the Backend
+- **Node.js** v16+ and **npm**
+- **MongoDB Atlas** account (free tier works) or local MongoDB
+- **Git**
+
+---
+
+## Local Development Setup
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/your-username/focus-session-monitoring.git
+cd focus-session-monitoring/focus-monitor
+```
+
+### 2. Setup the Backend
 
 ```bash
 cd server
 npm install
-cp .env.example .env
-# Edit .env with your MongoDB URI and JWT secret
+```
+
+Create a `.env` file in the `server/` directory:
+
+```env
+PORT=5000
+MONGO_URI=mongodb+srv://<username>:<password>@cluster0.xxxxx.mongodb.net/focus-monitor?retryWrites=true&w=majority
+JWT_SECRET=your_strong_random_secret_key_here
+CLIENT_URL=http://localhost:5173
+```
+
+Start the server:
+
+```bash
 npm run dev
 ```
 
-### 2. Setup the Frontend
+### 3. Setup the Frontend
 
 ```bash
 cd client
 npm install
-cp .env.example .env
-# Edit .env if your backend is not on localhost:5000
+```
+
+Create a `.env` file in the `client/` directory (optional — defaults to `/api`):
+
+```env
+VITE_API_URL=http://localhost:5000/api
+```
+
+Start the client:
+
+```bash
 npm run dev
 ```
 
@@ -44,12 +88,12 @@ The app will be available at `http://localhost:5173`
 
 ### Server (`server/.env`)
 
-| Variable     | Description                        | Default                        |
-|--------------|------------------------------------|-------------------------------|
-| `PORT`       | Server port                        | `5000`                        |
-| `MONGO_URI`  | MongoDB connection string          | `mongodb://localhost:27017/...` |
-| `JWT_SECRET` | Secret key for JWT signing         | (set a strong random string)  |
-| `CLIENT_URL` | Frontend origin for CORS           | `http://localhost:5173`       |
+| Variable     | Description                        | Example / Default              |
+|--------------|------------------------------------|--------------------------------|
+| `PORT`       | Server port                        | `5000`                         |
+| `MONGO_URI`  | MongoDB connection string          | `mongodb+srv://user:pass@...`  |
+| `JWT_SECRET` | Secret key for JWT signing         | A strong random 32+ char string|
+| `CLIENT_URL` | Frontend origin for CORS           | `http://localhost:5173`        |
 
 ### Client (`client/.env`)
 
@@ -62,11 +106,14 @@ The app will be available at `http://localhost:5173`
 ## Features
 
 ### User Features
-- Register and login
+- Register and login with JWT authentication
 - Focus monitoring starts automatically after login
-- Detects tab switching (`visibilitychange` event)
+- **Away-time tracking**: detects tab switches via `visibilitychange` event, records leave time, return time, and away duration
+- **Focus Activity Log**: displays all away events in a table on the dashboard
 - Detects browser/window blur (`blur` event)
+- Detects user inactivity (configurable threshold)
 - 30-second buzzer alarm using Web Audio API when focus is lost
+- Alarm auto-stops when user returns to the tab
 - Dismiss alarm button
 - Live violation counter
 - Personal violation log
@@ -96,43 +143,78 @@ The app will be available at `http://localhost:5173`
 | GET    | `/api/my-violations`  | User     | Get current user's violations |
 | GET    | `/api/stats`          | Admin    | Get violation statistics      |
 
+### Away Time
+| Method | Endpoint                   | Auth     | Description                        |
+|--------|----------------------------|----------|------------------------------------|
+| POST   | `/api/away-time`           | User     | Record a tab-switch away event     |
+| GET    | `/api/away-time/:sessionId`| User     | Get away logs for a session        |
+
 ---
 
 ## Focus Detection Logic
 
-The system listens for two browser events:
+The system listens for multiple browser events:
 
-1. **`document.visibilitychange`** — fires when the user switches tabs or the document becomes hidden
-2. **`window.blur`** — fires when the browser window loses focus (minimized, other app, etc.)
+1. **`document.visibilitychange`** — fires when the user switches tabs
+2. **`window.blur`** — fires when the browser window loses focus
+3. **User activity events** — mousedown, mousemove, keydown, touchstart, click, scroll
 
-When either event triggers:
-1. A Web Audio API oscillator generates a pulsing alarm sound
-2. A 30-second countdown begins
-3. A violation is sent to the backend API
-4. The violation is stored in MongoDB with userId, username, reason, and timestamp
+### Away-Time Tracking
+When the user leaves the tab:
+1. The leave timestamp is recorded
+2. When they return, the return timestamp and away duration (in seconds) are calculated
+3. The data is sent to `POST /api/away-time` and stored in the `AwayLog` collection
+4. The **Focus Activity Log** table on the dashboard updates automatically
+
+### Alarm System
+- Inactivity beyond the configured threshold triggers a 30-second buzzer alarm
+- The alarm uses dual oscillators (sawtooth + square) with LFO modulation for maximum impact
+- Returning to the tab stops the alarm immediately
+- A violation is logged to the backend with the reason and timestamp
 
 ---
 
 ## Deployment
 
-### Frontend → Vercel
-1. Push `client/` to GitHub
-2. Import in Vercel
-3. Set build command: `npm run build`
-4. Set output directory: `dist`
-5. Add env variable: `VITE_API_URL=https://your-backend.onrender.com/api`
-
-### Backend → Render
-1. Push `server/` to GitHub
-2. Create a new Web Service on Render
-3. Set start command: `node server.js`
-4. Add all environment variables from `.env.example`
-
 ### Database → MongoDB Atlas
 1. Create a free cluster at [mongodb.com/atlas](https://mongodb.com/atlas)
-2. Add a database user
-3. Whitelist all IPs (`0.0.0.0/0`) for Render compatibility
-4. Copy the connection string to `MONGO_URI`
+2. Create a database user (Database Access → Add New Database User)
+3. Whitelist all IPs: Network Access → Add IP Address → `0.0.0.0/0`
+4. Get connection string: Database → Connect → Drivers → Copy the URI
+5. Replace `<username>` and `<password>` in the URI with your credentials
+
+### Backend → Render
+1. Push code to GitHub
+2. Go to [render.com](https://render.com) → New → Web Service
+3. Connect your GitHub repo
+4. Set **Root Directory**: `focus-monitor/server`
+5. Set **Build Command**: `npm install`
+6. Set **Start Command**: `node server.js`
+7. Add environment variables:
+
+| Key          | Value                                      |
+|--------------|--------------------------------------------|
+| `MONGO_URI`  | Your MongoDB Atlas connection string       |
+| `JWT_SECRET` | A strong random string (32+ characters)    |
+| `CLIENT_URL` | `*` (update to frontend URL after deploy)  |
+
+8. Click **Create Web Service** and wait for deploy to finish
+9. Copy the Render URL (e.g. `https://your-app.onrender.com`)
+
+### Frontend → Vercel / Render
+1. Go to [vercel.com](https://vercel.com) → New Project (or Render → New Static Site)
+2. Connect your GitHub repo
+3. Set **Root Directory**: `focus-monitor/client`
+4. Set **Build Command**: `npm run build`
+5. Set **Output Directory**: `dist`
+6. Add environment variable:
+
+| Key            | Value                                          |
+|----------------|-------------------------------------------------|
+| `VITE_API_URL` | `https://your-backend.onrender.com/api`         |
+
+7. Deploy and copy the frontend URL
+8. **Go back to Render backend** → update `CLIENT_URL` to your frontend URL
 
 ---
 
